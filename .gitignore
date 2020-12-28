@@ -1,6 +1,7 @@
 # Prerequisites
 *.d
-
+*.ds_store
+*.idea
 # Object files
 *.o
 *.ko
