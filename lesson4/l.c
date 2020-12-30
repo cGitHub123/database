@@ -112,8 +112,8 @@ const uint32_t ROW_SIZE = ID_SIZE + USER_SIZE + EMAIL_SIZE;
 void serialize_row(Row *source, void *destination) {
     // C和C++使用的内存拷贝函数.
     memcpy(destination + ID_OFFSET, &(source->id), ID_SIZE);
-    memcpy(destination + USERNAME_OFFSET, &(source->username), USER_SIZE);
-    memcpy(destination + EMAIL_OFFSET, &(source->email), EMAIL_SIZE);
+    strncpy(destination + USERNAME_OFFSET, source->username, USER_SIZE);
+    strncpy(destination + EMAIL_OFFSET, source->email, EMAIL_SIZE);
 }
 
 // 反序列化方法.
@@ -253,8 +253,6 @@ MetaCommandResult doMetaCommand(InputBuffer *input_buffer, Table *table) {
     // strcmp的意思是比较两个字符串的意思.
     if (strcmp(input_buffer->buffer, ".exit") == 0) {
         db_close(table);
-        close_input_buffer(input_buffer);
-        free(table);
         exit(EXIT_SUCCESS);
     } else {
         return MEAT_COMMAND_ERROR;
