@@ -6,6 +6,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+// 限制每个表的总页数.
+#define TABLE_MAX_PAGES 100
+
+typedef struct {
+    int file_descripter;
+    uint32_t file_length;
+    void *pages[TABLE_MAX_PAGES];
+} Pager;
 
 typedef struct {
     char *buffer;
@@ -98,7 +109,7 @@ const uint32_t ROW_SIZE = ID_SIZE + USER_SIZE + EMAIL_SIZE;
 
 
 // 序列化方法.
-void serialize_row(Row *source, void* destination) {
+void serialize_row(Row *source, void *destination) {
     // C和C++使用的内存拷贝函数.
     memcpy(destination + ID_OFFSET, &(source->id), ID_SIZE);
     memcpy(destination + USERNAME_OFFSET, &(source->username), USER_SIZE);
@@ -106,14 +117,12 @@ void serialize_row(Row *source, void* destination) {
 }
 
 // 反序列化方法.
-void derialize_row(void *source, Row* destination) {
+void derialize_row(void *source, Row *destination) {
     memcpy(&(destination->id), source + ID_OFFSET, ID_SIZE);
     memcpy(&(destination->username), source + USERNAME_OFFSET, USER_SIZE);
     memcpy(&(destination->email), source + EMAIL_OFFSET, EMAIL_SIZE);
 }
 
-// 限制每个表的总页数.
-#define TABLE_MAX_PAGES 100
 
 // 每个页的页大小.
 const uint32_t PAGE_SIZE = 4096;
@@ -126,20 +135,112 @@ const uint32_t TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 
 typedef struct {
     uint32_t num_rows;
-    void *pages[TABLE_MAX_PAGES];
+    Pager *pager;
 } Table;
+
+// 如果没有命中内存，就去硬盘去取.
+void *getPage(Pager *pager, uint32_t page_num) {
+    if (page_num > TABLE_MAX_PAGES) {
+        printf("get page error");
+        exit(EXIT_FAILURE);
+    }
+    if (pager->pages[page_num] == NULL) {
+        // 分配内存空间.
+        void *page = malloc(PAGE_SIZE);
+        // 根据文件的大小需要分配页数.
+        uint32_t num_pages = pager->file_length / PAGE_SIZE;
+        // 如果有余数,书名还得多来一个页.
+        if (pager->file_length % PAGE_SIZE) {
+            num_pages = num_pages + 1;
+        }
+        if (page_num <= num_pages) {
+            lseek(pager->file_descripter, page_num * PAGE_SIZE, SEEK_SET);
+            ssize_t bytes_read = read(pager->file_descripter, page, PAGE_SIZE);
+            if (bytes_read == -1) {
+                printf("reading file error");
+                exit(EXIT_FAILURE);
+            }
+        }
+        pager->pages[page_num] = page;
+    }
+    return pager->pages[page_num];
+}
+
+
+void pager_flush(Pager *pager, uint32_t page_num, uint32_t size) {
+    // 做一个基本的检查.
+    if (pager -> pages[page_num] == NULL) {
+        printf("error page\n");
+        exit(EXIT_FAILURE);
+    }
+    // 获取文件大小.
+    off_t offset = lseek(pager->file_descripter, page_num * PAGE_SIZE, SEEK_SET);
+
+    if (offset == -1) {
+        printf("seek file error\n");
+        exit(EXIT_FAILURE);
+    }
+    // 开始写文件.
+    ssize_t bytes_written = write(pager -> file_descripter, pager -> pages[page_num], size);
+
+    if (bytes_written == -1) {
+      printf("Error writing\n");
+      exit(EXIT_FAILURE);
+    }
+}
+
+void db_close(Table *table) {
+    Pager *pager = table->pager;
+    // 一共有多少页,先去掉不完整的页.
+    uint32_t num_full_pages = table->num_rows / ROWS_PER_PAGE;
+    for (uint32_t i = 0; i < num_full_pages; i++) {
+        if (pager->pages[i] == NULL) {
+            continue;
+        }
+        // 刷新到磁盘.
+        pager_flush(pager, i, PAGE_SIZE);
+        // 释放内存.
+        free(pager->pages[i]);
+        pager->pages[i] = NULL;
+    }
+    uint32_t additional_row = table->num_rows % ROWS_PER_PAGE;
+    // 如果存在部分页.
+    if (additional_row > 0) {
+        // 取出最后一个.
+        uint32_t page_num = num_full_pages;
+        if (pager->pages[page_num] != NULL) {
+            pager_flush(pager, page_num, additional_row * ROW_SIZE);
+            free(pager->pages[page_num]);
+            pager->pages[page_num] = NULL;
+        }
+    }
+    // 关闭文件描述符.
+    int result = close(pager->file_descripter);
+    // 如果没有关闭成功就报错.
+    if (result == -1) {
+        printf("Error close file\n");
+        exit(EXIT_FAILURE);
+    }
+    // 再确认一遍.
+    for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
+        void *page = pager->pages[i];
+        if (page) {
+            free(page);
+            pager->pages[i] = NULL;
+        }
+    }
+    free(pager);
+    free(table);
+}
+
 
 
 // 读取特定的一行.
 void *row_slot(Table *table, uint32_t row_num) {
     // 根据行号获取它在哪一页.
     uint32_t page_num = row_num / ROWS_PER_PAGE;
-
-    void *page = table->pages[page_num];
-
-    if (page == NULL) {
-        page = table->pages[page_num] = malloc(PAGE_SIZE);
-    }
+    //
+    void *page = getPage(table->pager, page_num);
 
     uint32_t row_offset = row_num % ROWS_PER_PAGE;
 
@@ -151,6 +252,7 @@ void *row_slot(Table *table, uint32_t row_num) {
 MetaCommandResult doMetaCommand(InputBuffer *input_buffer, Table *table) {
     // strcmp的意思是比较两个字符串的意思.
     if (strcmp(input_buffer->buffer, ".exit") == 0) {
+        db_close(table);
         close_input_buffer(input_buffer);
         free(table);
         exit(EXIT_SUCCESS);
@@ -159,15 +261,15 @@ MetaCommandResult doMetaCommand(InputBuffer *input_buffer, Table *table) {
     }
 }
 
-PrepareResult doPrepareInsert(InputBuffer* input_buffer, Statement* statement){
+PrepareResult doPrepareInsert(InputBuffer *input_buffer, Statement *statement) {
     // 先确定为插入.
     statement->type = STATEMENT_INSERT;
     // 分解字符串 str 为一组字符串.
     // 第一次调用时，strtok()必需给予参数s字符串，往后的调用则将参数s设置成NULL,每次调用成功则返回指向被分割出片段的指针.
-    char* keyword = strtok(input_buffer -> buffer, " ");
-    char* id_string = strtok(NULL, " ");
-    char* username = strtok(NULL, " ");
-    char* email = strtok(NULL, " ");
+    char *keyword = strtok(input_buffer->buffer, " ");
+    char *id_string = strtok(NULL, " ");
+    char *username = strtok(NULL, " ");
+    char *email = strtok(NULL, " ");
 
     if (id_string == NULL || username == NULL || email == NULL) {
         return PREPARE_SYNTAX_ERROR;
@@ -189,14 +291,14 @@ PrepareResult doPrepareInsert(InputBuffer* input_buffer, Statement* statement){
         return PREPARE_STRING_TOO_LONG;
     }
     statement->row_to_insert.id = id;
-    strcpy(statement -> row_to_insert.username, username);
-    strcpy(statement -> row_to_insert.email, email);
+    strcpy(statement->row_to_insert.username, username);
+    strcpy(statement->row_to_insert.email, email);
 
     return PREPARE_SUCCESS;
 }
 
 
-PrepareResult doPrepareResult(InputBuffer* input_buffer, Statement* statement) {
+PrepareResult doPrepareResult(InputBuffer *input_buffer, Statement *statement) {
     // 插入校验.
     if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
         return doPrepareInsert(input_buffer, statement);
@@ -242,27 +344,48 @@ ExecuteResult excute_statement(Statement *statement, Table *table) {
     }
 }
 
-Table *new_table() {
+Pager *pageOpen(const char *filename) {
+    // 首先我们打开这个文件.
+    int fd = open(filename, O_RDWR | O_CREAT, S_IWUSR | S_IRUSR);
+    if (fd == -1) {
+        printf("unable open file");
+        exit(EXIT_FAILURE);
+    }
+    // 获取文件的长度.
+    off_t file_length = lseek(fd, 0, SEEK_END);
+
+    // 这个Page就代表了这个文件.
+    Pager *pager = malloc(sizeof(Pager));
+
+    pager->file_descripter = fd;
+    pager->file_length = file_length;
+
+    for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
+        pager->pages[i] = NULL;
+    }
+    return pager;
+}
+
+Table *db_open(const char *filename) {
     // malloc分配所需的内存空间，并返回一个指向它的指针.
     // sizeof分配的是字节大小.
+    Pager *pager = pageOpen(filename);
+    uint32_t num_rows = pager->file_length / ROW_SIZE;
     Table *table = malloc(sizeof(Table));
-    table->num_rows = 0;
-    for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
-        table->pages[i] = NULL;
-    }
+    table->pager = pager;
+    table->num_rows = num_rows;
     return table;
 }
 
-void free_table(Table *table) {
-    // table里面有个指针所以要循环释放.
-    for (int i = 0; table->pages[i]; i++) {
-        free(table->pages[i]);
-    }
-    free(table);
-}
-
 int main(int argc, char *argv[]) {
-    Table *table = new_table();
+    if (argc < 2) {
+        printf("please give a fileName");
+        exit(EXIT_FAILURE);
+    }
+
+    char* filename = argv[1];
+    Table* table = db_open(filename);
+
     InputBuffer *input_buffer = new_input_buffer();
     while (true) {
         print_prompt();
