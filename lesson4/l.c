@@ -112,8 +112,8 @@ const uint32_t ROW_SIZE = ID_SIZE + USER_SIZE + EMAIL_SIZE;
 void serialize_row(Row *source, void *destination) {
     // C和C++使用的内存拷贝函数.
     memcpy(destination + ID_OFFSET, &(source->id), ID_SIZE);
-    strncpy(destination + USERNAME_OFFSET, source->username, USER_SIZE);
-    strncpy(destination + EMAIL_OFFSET, source->email, EMAIL_SIZE);
+    memcpy(destination + USERNAME_OFFSET, &(source->username), USER_SIZE);
+    memcpy(destination + EMAIL_OFFSET, &(source->email), EMAIL_SIZE);
 }
 
 // 反序列化方法.
@@ -149,7 +149,7 @@ void *getPage(Pager *pager, uint32_t page_num) {
         void *page = malloc(PAGE_SIZE);
         // 根据文件的大小需要分配页数.
         uint32_t num_pages = pager->file_length / PAGE_SIZE;
-        // 如果有余数,书名还得多来一个页.
+        // 如果有余数,还得多来一个页.
         if (pager->file_length % PAGE_SIZE) {
             num_pages = num_pages + 1;
         }
@@ -166,10 +166,9 @@ void *getPage(Pager *pager, uint32_t page_num) {
     return pager->pages[page_num];
 }
 
-
 void pager_flush(Pager *pager, uint32_t page_num, uint32_t size) {
     // 做一个基本的检查.
-    if (pager -> pages[page_num] == NULL) {
+    if (pager->pages[page_num] == NULL) {
         printf("error page\n");
         exit(EXIT_FAILURE);
     }
@@ -181,11 +180,11 @@ void pager_flush(Pager *pager, uint32_t page_num, uint32_t size) {
         exit(EXIT_FAILURE);
     }
     // 开始写文件.
-    ssize_t bytes_written = write(pager -> file_descripter, pager -> pages[page_num], size);
+    ssize_t bytes_written = write(pager->file_descripter, pager->pages[page_num], size);
 
     if (bytes_written == -1) {
-      printf("Error writing\n");
-      exit(EXIT_FAILURE);
+        printf("Error writing\n");
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -234,7 +233,6 @@ void db_close(Table *table) {
 }
 
 
-
 // 读取特定的一行.
 void *row_slot(Table *table, uint32_t row_num) {
     // 根据行号获取它在哪一页.
@@ -244,7 +242,7 @@ void *row_slot(Table *table, uint32_t row_num) {
 
     uint32_t row_offset = row_num % ROWS_PER_PAGE;
 
-    uint32_t byte_offset = row_offset % ROW_SIZE;
+    uint32_t byte_offset = row_offset * ROW_SIZE;
 
     return page + byte_offset;
 }
@@ -381,8 +379,8 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    char* filename = argv[1];
-    Table* table = db_open(filename);
+    char *filename = argv[1];
+    Table *table = db_open(filename);
 
     InputBuffer *input_buffer = new_input_buffer();
     while (true) {
