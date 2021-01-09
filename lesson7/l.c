@@ -12,18 +12,15 @@
 // 限制每个表的总页数.
 #define TABLE_MAX_PAGES 100
 
-
-
-
 typedef enum {
-    NODE, // 内部节点
-    LEFT  // 叶子节点
-} Node;
+    NODE_INTERNAL, NODE_LEAF
+} NodeType;
+
 
 typedef struct {
     int file_descripter;
     uint32_t file_length;
-    uint32_t num_pager;
+    uint32_t num_pages;
     void *pages[TABLE_MAX_PAGES];
 } Pager;
 
@@ -120,67 +117,49 @@ const uint32_t ROW_SIZE = ID_SIZE + USER_SIZE + EMAIL_SIZE;
 // 每个页的页大小.
 const uint32_t PAGE_SIZE = 4096;
 
-// 平均每页的行数,行不要跨页存储.
-const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
-
-// 表中总的行数.
-const uint32_t TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
-
-
-// 普通节点的属性.
+// 每个NODE都有一个HEADER.
 const uint32_t NODE_TYPE_SIZE = sizeof(uint8_t);
-//
 const uint32_t NODE_TYPE_OFFSET = 0;
-//
 const uint32_t IS_ROOT_SIZE = sizeof(uint8_t);
-//
 const uint32_t IS_ROOT_OFFSET = NODE_TYPE_SIZE;
-//
 const uint32_t PARENT_POINTER_SIZE = sizeof(uint32_t);
-//
 const uint32_t PARENT_POINTER_OFFSET = IS_ROOT_OFFSET + IS_ROOT_SIZE;
-//
 const uint8_t COMMON_NODE_HEADER_SIZE = NODE_TYPE_SIZE + IS_ROOT_SIZE + PARENT_POINTER_SIZE;
 
-// 叶子节点的头属性.
+
+// 叶子节点头格式.
 const uint32_t LEAF_NODE_NUM_CELLS_SIZE = sizeof(uint32_t);
-
 const uint32_t LEAF_NODE_NUM_CELLS_OFFSET = COMMON_NODE_HEADER_SIZE;
-
 const uint32_t LEAF_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE + LEAF_NODE_NUM_CELLS_SIZE;
 
-// 叶子节点的body属性.
+// 叶子节点BODY格式.
 const uint32_t LEAF_NODE_KEY_SIZE = sizeof(uint32_t);
-
 const uint32_t LEAF_NODE_KEY_OFFSET = 0;
-
 const uint32_t LEAF_NODE_VALUE_SIZE = ROW_SIZE;
-
-const uint32_t LEAF_NODE_VALUE_OFFSET = LEAF_NODE_KEY_OFFSET + LEAF_NODE_KEY_SIZE;
-
+const uint32_t LEAF_NODE_VALUE_OFFSET = LEAF_NODE_KEY_SIZE + LEAF_NODE_KEY_SIZE;
 const uint32_t LEAF_NODE_CELL_SIZE = LEAF_NODE_KEY_SIZE + LEAF_NODE_VALUE_SIZE;
-
 const uint32_t LEAF_NODE_SPACE_FOR_CELLS = PAGE_SIZE - LEAF_NODE_HEADER_SIZE;
-
 const uint32_t LEAF_NODE_MAX_CELLS = LEAF_NODE_SPACE_FOR_CELLS / LEAF_NODE_CELL_SIZE;
 
-uint32_t* leaf_node_num_cells(void* node) {
+uint32_t *leaf_node_num_cells(void *node) {
     return node + LEAF_NODE_NUM_CELLS_OFFSET;
 }
 
-void* leaf_node_cell(void* node, uint32_t cell_num) {
+void *leaf_node_cell(void *node, uint32_t cell_num) {
     return node + LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE;
 }
 
-uint32_t* leaf_node_key(void* node, uint32_t cell_num) {
+uint32_t *leaf_node_key(void *node, uint32_t cell_num) {
     return leaf_node_cell(node, cell_num);
 }
 
-void* leaf_node_value(void* node, uint32_t cell_num) {
+void *leaf_node_value(void *node, uint32_t cell_num) {
     return leaf_node_cell(node, cell_num) + LEAF_NODE_KEY_SIZE;
 }
 
-void initialize_leaf_node(void* node) { *leaf_node_num_cells(node) = 0; }
+void initialize_leaf_node(void *node) {
+    *leaf_node_num_cells(node) = 0;
+}
 
 // 序列化方法.
 void serialize_row(Row *source, void *destination) {
@@ -210,7 +189,6 @@ typedef struct {
 } Cursor;
 
 
-
 // 如果没有命中内存，就去硬盘去取.
 void *getPage(Pager *pager, uint32_t page_num) {
     if (page_num > TABLE_MAX_PAGES) {
@@ -235,8 +213,8 @@ void *getPage(Pager *pager, uint32_t page_num) {
             }
         }
         pager->pages[page_num] = page;
-        if (page_num >= pager -> num_pager) {
-            pager -> num_pager = page_num + 1;
+        if (page_num >= pager->num_pages) {
+            pager->num_pages = page_num + 1;
         }
     }
     return pager->pages[page_num];
@@ -245,22 +223,23 @@ void *getPage(Pager *pager, uint32_t page_num) {
 Cursor *table_start(Table *table) {
     Cursor *cursor = malloc(sizeof(Cursor));
     cursor->table = table;
-    cursor -> page_num = table -> root_page_num;
-    cursor -> cell_num = 0;
-
-    void* root_node = getPage(table -> pager, table -> root_page_num );
+    cursor->page_num = table->root_page_num;
+    cursor->cell_num = 0;
+    void *root_node = getPage(table->pager, table->root_page_num);
     uint32_t num_cells = *leaf_node_num_cells(root_node);
-    cursor -> end_of_table = (num_cells == 0);
+    cursor->end_of_table = (num_cells == 0);
     return cursor;
 }
 
 Cursor *table_end(Table *table) {
     Cursor *cursor = malloc(sizeof(Cursor));
     cursor->table = table;
-    cursor->page_num = table -> root_page_num;
-    void* root_node =getPage(table -> pager, table -> root_page_num);
+    cursor->page_num = table->root_page_num;
+
+    void *root_node = getPage(table->pager, table->root_page_num);
     uint32_t num_cells = *leaf_node_num_cells(root_node);
     cursor->cell_num = num_cells;
+
     cursor->end_of_table = true;
     return cursor;
 }
@@ -280,6 +259,7 @@ void pager_flush(Pager *pager, uint32_t page_num) {
     }
     // 开始写文件.
     ssize_t bytes_written = write(pager->file_descripter, pager->pages[page_num], PAGE_SIZE);
+
     if (bytes_written == -1) {
         printf("Error writing\n");
         exit(EXIT_FAILURE);
@@ -288,9 +268,8 @@ void pager_flush(Pager *pager, uint32_t page_num) {
 
 void db_close(Table *table) {
     Pager *pager = table->pager;
-    // 一共有多少页,先去掉不完整的页.
-    uint32_t num_full_pages = table->num_rows / ROWS_PER_PAGE;
-    for (uint32_t i = 0; i < num_full_pages; i++) {
+    // TODO.
+    for (uint32_t i = 0; i < pager->num_pages; i++) {
         if (pager->pages[i] == NULL) {
             continue;
         }
@@ -322,28 +301,11 @@ void db_close(Table *table) {
 
 // 读取特定的一行.
 void *cursor_value(Cursor *cursor) {
-    uint32_t row_num = cursor->row_num;
-    // 根据行号获取它在哪一页.
-    uint32_t page_num = row_num / ROWS_PER_PAGE;
-    //
+    uint32_t page_num = cursor->page_num;
     void *page = getPage(cursor->table->pager, page_num);
-
-    uint32_t row_offset = row_num % ROWS_PER_PAGE;
-
-    uint32_t byte_offset = row_offset * ROW_SIZE;
-
-    return page + byte_offset;
+    return leaf_node_value(page, cursor->cell_num);
 }
 
-MetaCommandResult doMetaCommand(InputBuffer *input_buffer, Table *table) {
-    // strcmp的意思是比较两个字符串的意思.
-    if (strcmp(input_buffer->buffer, ".exit") == 0) {
-        db_close(table);
-        exit(EXIT_SUCCESS);
-    } else {
-        return MEAT_COMMAND_ERROR;
-    }
-}
 
 PrepareResult doPrepareInsert(InputBuffer *input_buffer, Statement *statement) {
     // 先确定为插入.
@@ -395,24 +357,14 @@ PrepareResult doPrepareResult(InputBuffer *input_buffer, Statement *statement) {
 }
 
 void cursor_advance(Cursor *cursor) {
-    cursor->row_num += 1;
-    if (cursor->row_num >= cursor->table->num_rows) {
+    uint32_t page_num = cursor->page_num;
+    void *node = getPage(cursor->table->pager, page_num);
+    cursor->cell_num += 1;
+    if (cursor->cell_num >= (*leaf_node_num_cells(node))) {
         cursor->end_of_table = true;
     }
 }
 
-ExecuteResult excute_insert(Statement *statement, Table *table) {
-    // 如果表已经满了,就返回错误.
-    if (table->num_rows >= TABLE_MAX_ROWS) {
-        return EXECUTE_TABLE_FULL;
-    }
-    // &取地址符.
-    Row *row_to_insert = &(statement->row_to_insert);
-    Cursor *cursor = table_end(table);
-    serialize_row(row_to_insert, cursor_value(cursor));
-    table->num_rows += 1;
-    return EXECUTE_SUCCESS;
-}
 
 void print_row(Row *row) {
     printf("(%d, %s, %s)\n", row->id, row->username, row->email);
@@ -430,14 +382,44 @@ ExecuteResult excute_select(Statement *statement, Table *table) {
     return EXECUTE_SUCCESS;
 }
 
-ExecuteResult excute_statement(Statement *statement, Table *table) {
-    switch (statement->type) {
-        case (STATEMENT_INSERT):
-            return excute_insert(statement, table);
-        case (STATEMENT_SELECT):
-            return excute_select(statement, table);
+void print_constants() {
+    printf("ROW_SIZE: %d\n", ROW_SIZE);
+    printf("COMMON_NODE_HEADER_SIZE: %d\n", COMMON_NODE_HEADER_SIZE);
+    printf("LEAF_NODE_HEADER_SIZE: %d\n", LEAF_NODE_HEADER_SIZE);
+    printf("LEAF_NODE_CELL_SIZE: %d\n", LEAF_NODE_CELL_SIZE);
+    printf("LEAF_NODE_SPACE_FOR_CELLS: %d\n", LEAF_NODE_SPACE_FOR_CELLS);
+    printf("LEAF_NODE_MAX_CELLS: %d\n", LEAF_NODE_MAX_CELLS);
+}
+
+void print_leaf_node(void *node) {
+    uint32_t num_cells = *leaf_node_num_cells(node);
+
+    printf("leaf (size %d)\n", num_cells);
+    for (uint32_t i = 0; i < num_cells; i++) {
+        uint32_t key = *leaf_node_key(node, i);
+        printf("  - %d : %d\n", i, key);
     }
 }
+
+
+MetaCommandResult doMetaCommand(InputBuffer *input_buffer, Table *table) {
+    // strcmp的意思是比较两个字符串的意思.
+    if (strcmp(input_buffer->buffer, ".exit") == 0) {
+        db_close(table);
+        exit(EXIT_SUCCESS);
+    } else if (strcmp(input_buffer->buffer, ".btree") == 0) {
+        printf("Tree:\n");
+        print_leaf_node(getPage(table->pager, 0));
+        return MEAT_COMMAND_SUCCESS;
+    } else if (strcmp(input_buffer->buffer, ".constant")) {
+        printf("Constsant:\n");
+        print_constants();
+        return MEAT_COMMAND_SUCCESS;
+    } else {
+        return MEAT_COMMAND_ERROR;
+    }
+}
+
 
 Pager *pageOpen(const char *filename) {
     // 首先我们打开这个文件.
@@ -455,15 +437,12 @@ Pager *pageOpen(const char *filename) {
     pager->file_descripter = fd;
     pager->file_length = file_length;
 
-    // 这里需要加个验证.
-    pager -> num_pager = (file_length / PAGE_SIZE);
+    pager->num_pages = (file_length / PAGE_SIZE);
 
     if (file_length % PAGE_SIZE != 0) {
-        printf("error db");
+        printf("NOT A WHOLE NUMBER");
         exit(EXIT_FAILURE);
     }
-
-
 
     for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
         pager->pages[i] = NULL;
@@ -475,12 +454,59 @@ Table *db_open(const char *filename) {
     // malloc分配所需的内存空间，并返回一个指向它的指针.
     // sizeof分配的是字节大小.
     Pager *pager = pageOpen(filename);
-    uint32_t num_rows = pager->file_length / ROW_SIZE;
+
     Table *table = malloc(sizeof(Table));
     table->pager = pager;
-    table->num_rows = num_rows;
+    table->root_page_num = 0;
+    if (pager->num_pages == 0) {
+        void *root_node = getPage(pager, 0);
+        initialize_leaf_node(root_node);
+    }
     return table;
 }
+
+void leaf_node_insert(Cursor *cursor, uint32_t key, Row *value) {
+    void *node = getPage(cursor->table->pager, cursor->page_num);
+    uint32_t num_cells = *leaf_node_num_cells(node);
+    if (num_cells >= LEAF_NODE_MAX_CELLS) {
+        printf("need to implement splitting");
+        exit(EXIT_FAILURE);
+    }
+
+    if (cursor->cell_num < num_cells) {
+        for (uint32_t i = num_cells; i > cursor->cell_num; i--) {
+            memcpy(leaf_node_cell(node, i), leaf_node_cell(node, i - 1), LEAF_NODE_CELL_SIZE);
+        }
+    }
+    *(leaf_node_num_cells(node)) += 1;
+    *(leaf_node_key(node, cursor->cell_num)) = key;
+
+    serialize_row(value, leaf_node_value(node, cursor->cell_num));
+
+}
+
+ExecuteResult excute_insert(Statement *statement, Table *table) {
+    // 如果表已经满了,就返回错误.
+    void *node = getPage(table->pager, table->root_page_num);
+    if ((*leaf_node_num_cells(node) >= LEAF_NODE_MAX_CELLS)) {
+        return EXECUTE_TABLE_FULL;
+    }
+    // &取地址符.
+    Row *row_to_insert = &(statement->row_to_insert);
+    Cursor *cursor = table_end(table);
+    leaf_node_insert(cursor, row_to_insert->id, row_to_insert);
+    return EXECUTE_SUCCESS;
+}
+
+ExecuteResult excute_statement(Statement *statement, Table *table) {
+    switch (statement->type) {
+        case (STATEMENT_INSERT):
+            return excute_insert(statement, table);
+        case (STATEMENT_SELECT):
+            return excute_select(statement, table);
+    }
+}
+
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
