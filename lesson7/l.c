@@ -422,7 +422,6 @@ MetaCommandResult doMetaCommand(InputBuffer *input_buffer, Table *table) {
 
 
 Pager *pageOpen(const char *filename) {
-    // 首先我们打开这个文件.
     int fd = open(filename, O_RDWR | O_CREAT, S_IWUSR | S_IRUSR);
     if (fd == -1) {
         printf("unable open file");
@@ -451,8 +450,6 @@ Pager *pageOpen(const char *filename) {
 }
 
 Table *db_open(const char *filename) {
-    // malloc分配所需的内存空间，并返回一个指向它的指针.
-    // sizeof分配的是字节大小.
     Pager *pager = pageOpen(filename);
 
     Table *table = malloc(sizeof(Table));
@@ -486,7 +483,6 @@ void leaf_node_insert(Cursor *cursor, uint32_t key, Row *value) {
 }
 
 ExecuteResult excute_insert(Statement *statement, Table *table) {
-    // 如果表已经满了,就返回错误.
     void *node = getPage(table->pager, table->root_page_num);
     if ((*leaf_node_num_cells(node) >= LEAF_NODE_MAX_CELLS)) {
         return EXECUTE_TABLE_FULL;
@@ -515,6 +511,8 @@ int main(int argc, char *argv[]) {
     }
 
     char *filename = argv[1];
+
+    // Step1
     Table *table = db_open(filename);
 
     InputBuffer *input_buffer = new_input_buffer();
@@ -551,7 +549,7 @@ int main(int argc, char *argv[]) {
                 continue;
         }
 
-        // 执行SQL.
+        // STEP2:执行SQL.
         switch (excute_statement(&statement, table)) {
             case (EXECUTE_SUCCESS):
                 printf("Executed.\n");
