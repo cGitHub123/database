@@ -1,0 +1,2 @@
+/Users/caibin/my/database/mydb1/lesson2/cmake-build-debug/CMakeFiles/rebuild_cache.dir
+/Users/caibin/my/database/mydb1/lesson2/cmake-build-debug/CMakeFiles/edit_cache.dir

@@ -1,0 +1,1 @@
+/Library/Developer/CommandLineTools/usr/bin/cc -g -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/mydb1.dir/lesson1/l.c.o CMakeFiles/mydb1.dir/lesson2/l.c.o  -o mydb1 
