@@ -1,0 +1,24 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/Users/caibin/my/database/mydb1/lesson8/l.c
+stdbool.h
+-
+stdio.h
+-
+stdlib.h
+-
+string.h
+-
+stdint.h
+-
+unistd.h
+-
+fcntl.h
+-
+
